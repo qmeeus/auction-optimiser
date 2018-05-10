@@ -1,4 +1,5 @@
 import warnings
+import pickle
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -16,6 +17,15 @@ from sklearn.metrics import (
     roc_curve
 )
 
+from sklearn.metrics import (
+    r2_score,
+    explained_variance_score,
+    mean_squared_error,
+    mean_absolute_error,
+    mean_squared_log_error,
+    median_absolute_error
+)
+
 from visualisation import label_barchart
 
 
@@ -27,16 +37,23 @@ def make_cross_validation(models, scoring, X, y):
         results[name] = cv_results
 
     results = pd.DataFrame(results)
-    plt.figure(figsize=(10, 6))
-    plt.bar(range(results.shape[1]), results.mean(), yerr=results.std())
-    plt.gca().set_xticklabels([""] + list(results.columns) + [""])
-    plt.title("Comparison of AUC score for multiple classifiers", y=-.2)
+    fig = plt.figure(figsize=(12, 6))
+    ax = fig.add_subplot(111)
+    results.mean().plot.bar(ax=ax, yerr=results.std(), color='Navy')
+    plt.title("Comparison of cross validation score for multiple predictors", y=-.2)
     plt.subplots_adjust(bottom=.2)
     label_barchart(plt.gca())
     return results
 
+def pickle_models(models):
 
-def make_grid_search_clf(classifiers, clf_params, X_train, y_train, X_test, y_test, random=False, search_kw=None):
+    for model in models:
+        name = str(model.__class__).split(".")[-1][:-2]
+        with open(f"output/{name}.pkl", 'wb') as f:
+            pickle.dump(model, f)
+            
+            
+def make_grid_search_clf(classifiers, clf_params, X_train, y_train, X_test, y_test, random=False, search_kw=None, save=True):
     best_models, scores = [], []
     results = pd.DataFrame(index=[item[0] for item in classifiers],
                            columns=["name", "params", "accuracy", "auc_score_tr", "auc_score_te",
@@ -75,9 +92,58 @@ def make_grid_search_clf(classifiers, clf_params, X_train, y_train, X_test, y_te
         print(best_models[-1], "\n")
         if i + 1 < len(classifiers):
             print("#" * 100)
+    fig = plt.figure(figsize=(12, 6))
+    ax = fig.add_subplot(111)
+    results.plot.bar(ax=ax)
+    if save:
+        pickle_models(best_models)
+    return best_models, results
 
-        return best_models, gs_results
+def make_grid_search_reg(regressors, reg_params, X_train, y_train, X_test, y_test, random=False, search_kw=None, save=True):
+    best_models, scores = [], []
+    results = pd.DataFrame(index=[item[0] for item in regressors],
+                           columns=["name", "params", "r2_score_tr", "r2_score_te", "explained_variance", "rmse", 
+                                    "mean_absolute_error", "mean_squared_log_error", "median_absolute_error"])
 
+    if random:
+        SearchCV = RandomizedSearchCV
+    else:
+        SearchCV = GridSearchCV
+    if search_kw is None:
+        search_kw = dict(n_jobs=-1, return_train_score=True)
+
+    for i, (name, reg) in enumerate(regressors):
+        params = reg_params[name]
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            gs = SearchCV(reg, params, **search_kw).fit(X_train, y_train)
+        best_models.append(gs.best_estimator_)
+        y_pred = gs.predict(X_test)
+        r2_score_te = r2_score(y_test, y_pred)
+        r2_score_tr = gs.best_score_
+        metrics = []
+        rmse = lambda x, y: np.sqrt(mean_squared_error(x, y))
+        for func in (explained_variance_score, rmse, mean_absolute_error, mean_squared_log_error, median_absolute_error):
+            metrics.append(func(y_test, y_pred))
+        params = gs.best_params_
+        results.loc[name, :] = (name, params, r2_score_tr, r2_score_te, *metrics)
+
+        scores.append(r2_score_te)
+        gs_results = pd.DataFrame(gs.cv_results_).drop("params", axis=1).sort_values("rank_test_score")
+        print("\n{}:\n".format(name))
+        print("\tRMSE: {:.2f}".format(metrics[1]))
+        print("\tR2 Score (Train set): {:.2%}".format(gs.best_score_))
+        print("\tR2 Score (Test set): {:.2%}\n".format(scores[-1]))
+        print(best_models[-1], "\n")
+        if i + 1 < len(regressors):
+            print("#" * 100)
+    fig = plt.figure(figsize=(12, 6))
+    ax = fig.add_subplot(111)
+    results.plot.bar(ax=ax)
+    if save:
+        pickle_models(best_models)
+    return best_models, results
+    
 
 def plot_roc_curve(classifiers, models, X, y):
     for name, model in zip(map(lambda x: x[0], classifiers), models):
