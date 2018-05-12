@@ -150,7 +150,7 @@ def plot_roc_curve(classifiers, models, X, y):
         scores = model.predict_proba(X)[:, 1]
         fpr, tpr, _ = roc_curve(y.ravel(), scores.ravel())
         roc_auc = roc_auc_score(y.ravel(), scores.ravel())
-        plt.plot(fpr, tpr, 'b', label=f'{name} (AUC={roc_auc:.2%})')
+        plt.plot(fpr, tpr, label=f'{name} (AUC={roc_auc:.2%})')
 
     plt.title('Receiver Operating Characteristic')
     plt.plot([0, 1], [0, 1], 'r--', label="Random predictions")
