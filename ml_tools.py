@@ -53,7 +53,9 @@ def pickle_models(models):
             pickle.dump(model, f)
             
             
-def make_grid_search_clf(classifiers, clf_params, X_train, y_train, X_test, y_test, random=False, search_kw=None, save=True):
+def make_grid_search_clf(classifiers, clf_params, X_train, y_train, X_test, y_test, random=False, search_kw=None, multiclass=False, save=True):
+    average, scorer = ("weighted", "accuracy") if multiclass else (None, "roc_auc")
+    
     best_models, scores = [], []
     results = pd.DataFrame(index=[item[0] for item in classifiers],
                            columns=["name", "params", "accuracy", "auc_score_tr", "auc_score_te",
@@ -64,7 +66,7 @@ def make_grid_search_clf(classifiers, clf_params, X_train, y_train, X_test, y_te
     else:
         SearchCV = GridSearchCV
     if search_kw is None:
-        search_kw = dict(n_jobs=-1, return_train_score=True)
+        search_kw = dict(n_jobs=-1, return_train_score=True, scoring="roc_auc")
 
     for i, (name, clf) in enumerate(classifiers):
         params = clf_params[name]
@@ -73,8 +75,8 @@ def make_grid_search_clf(classifiers, clf_params, X_train, y_train, X_test, y_te
             gs = SearchCV(clf, params, **search_kw).fit(X_train, y_train)
         best_models.append(gs.best_estimator_)
         y_pred = gs.predict(X_test)
-        precision, recall, f_score, support = precision_recall_fscore_support(y_test, y_pred)
-        auc_score_te = roc_auc_score(y_test, y_pred)
+        precision, recall, f_score, support = precision_recall_fscore_support(y_test, y_pred, average=average)
+        auc_score_te = roc_auc_score(y_test, y_pred, average=average)
         auc_score_tr = gs.best_score_
         accuracy = (y_pred == y_test).mean()
         params = gs.best_params_
