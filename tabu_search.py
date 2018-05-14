@@ -12,14 +12,14 @@ class TabuSearchAlgorithm:
 
     COLUMN_NAMES = [
         'LotNr', 'Allocate', 'Bank', 'Dealer', 'Liquidator', 'Volunteer',
-        'LotsSale', 'LotsCtgry', 'Forced', 'year', 'lEstValue', 'lFollowers',
-        'Duration', 'Morning', 'Evening', 'Afternoon', 'lStartPrice', 'lSP.EV'
+        'LotsSale', 'LotsCtgry', 'Forced', 'lEstValue', 'lFollowers',
+        'Duration', 'Morning', 'Evening', 'Afternoon', 'lSP.EV'
     ]
 
     MOVE_NAMES = ["edit_dayperiod", "edit_duration", "edit_price"]
     PROBABILITIES = [.01, .49, .50]
 
-    def __init__(self, initial_state, model, n_iter=10**4, early_stop=10, tolerance=0.,
+    def __init__(self, initial_state, model, n_iter=10**3, early_stop=10, tolerance=.01,
                  tabu_size=20, verbose=True):
 
 
@@ -50,13 +50,10 @@ class TabuSearchAlgorithm:
             # Random selection of a move
             func, params = self.choose_move()
 
-            # If we could not find any params for the chosen move, we won't try it again
             if not params:
-                input("Removing %s" % func.__name__)
-                self.probabilities[func.__name__] = 0
+                # Iteration is not incremented if no param was found
                 continue
 
-            # Iteration is not incremented if no param was found
             self.iteration += 1
 
             # Perform the move
@@ -105,7 +102,7 @@ class TabuSearchAlgorithm:
 
     def get_params(self, row):
         print(row)
-        return row[self.COLUMN_NAMES[-6:]]
+        return row[self.COLUMN_NAMES[-5:]]
 
     ############################################################################
     #                                   MOVES
@@ -118,13 +115,9 @@ class TabuSearchAlgorithm:
         :param func: the move function
         :param params: the parameters for the move function
         """
-        # print(f"Trying {func.__name__} with {params}")
-        # Calculate the new state
-        # print(self.get_params(self.state), self.score)
         new_state = func(self.state, params)
         new_score, probabilities = self.evaluate(new_state)
-        # print(new_score, probabilities)
-        # input()
+
         # We check whether the new state is accepted or not and perform the update if it is
         if self.check(new_score):
             if self.verbose:
@@ -162,7 +155,7 @@ class TabuSearchAlgorithm:
         }
         tries = 0
         while True:
-            if tries >= 10:  #self.move_invalidation_threshold:
+            if tries >= 10:
                 return
             params = param_functions[func_name]()
             if params in self.tabu[func_name]:
@@ -199,8 +192,6 @@ class TabuSearchAlgorithm:
         row = row.copy()
         # Set starting price to estimated price ration    
         row['lSP.EV'] = value
-        # Because we change the sp.ev we also adapt the startprice
-        row['lStartPrice'] = row['lEstValue'] + value
         return row
 
     def _params_price(self):
