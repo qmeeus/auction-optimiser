@@ -19,7 +19,7 @@ class TabuSearchAlgorithm:
     MOVE_NAMES = ["edit_dayperiod", "edit_duration", "edit_price"]
     PROBABILITIES = [.01, .49, .50]
 
-    def __init__(self, initial_state, model, n_iter=10**3, early_stop=10, tolerance=.01,
+    def __init__(self, initial_state, model, n_iter=10**3.5, early_stop=15, tolerance=.1,
                  tabu_size=20, verbose=True):
 
 
@@ -35,7 +35,7 @@ class TabuSearchAlgorithm:
         self.model = self.load_model(model)
         self.state = initial_state
         self.score, self.predicted_proba = self.evaluate(initial_state)
-        self.best_score = (self.score, self.state, self.predicted_proba)
+        self.best = (self.score, self.state, self.predicted_proba)
         self.early_stop_history = deque(maxlen=early_stop)
         self.probabilities = {m: p for m, p in zip(self.MOVE_NAMES, self.PROBABILITIES)}
         self.move_functions = [self.edit_dayperiod, self.edit_duration, self.edit_price]
@@ -64,9 +64,9 @@ class TabuSearchAlgorithm:
 
     def print_report(self):
         if self.verbose:
-            print(f"Best solution achieved: {self.best_score[0]}\n"
-                  f"Best probabilities achieved: {self.best_score[-1]}\n"
-                  f"Best parameters found: \n{self.get_params(self.best_score[1])}")
+            print(f"Best solution achieved: {self.best[0]}\n"
+                  f"Best probabilities achieved: {self.best[-1]}\n"
+                  f"Best parameters found: \n{self.get_params(self.best[1])}")
             if self.max_iteration_reached():
                 reason_stopped = "the maximum number of iteration was reached."
             elif self.early_stop_reached():
@@ -87,8 +87,8 @@ class TabuSearchAlgorithm:
         the early_stop_history of the distances.
         :param state: the new state
         """
-        if score > self.best_score[0]:
-            self.best_score = (score, state, probabilities)
+        if score > self.best[0]:
+            self.best = (score, state, probabilities)
         self.early_stop_history.append(score)
         self.state = state
         self.score = score
@@ -222,6 +222,7 @@ class TabuSearchAlgorithm:
         :return: a boolean
         """
         return (any(proba > 0 for proba in self.probabilities.values())
+                and self.best[0] < 4.5
                 and not self.max_iteration_reached()
                 and not self.early_stop_reached())
 
@@ -229,7 +230,7 @@ class TabuSearchAlgorithm:
         return self.iteration >= self.n_iter
 
     def early_stop_reached(self):
-        return self.best_score[0] not in self.early_stop_history and len(self.early_stop_history) == self.early_stop
+        return self.best[0] not in self.early_stop_history and len(self.early_stop_history) == self.early_stop
 
     @staticmethod
     def load_model(model_file):
@@ -245,13 +246,16 @@ if __name__ == '__main__':
 
     target_name = "lmultiplier"
     train_cols = ['LotNr', 'Allocate', 'Bank', 'Dealer', 'Liquidator', 'Volunteer',
-                  'LotsSale', 'LotsCtgry', 'Forced', 'year', 'lEstValue', 'lFollowers',
-                  'Duration', 'Morning', 'Evening', 'Afternoon', 'lStartPrice', 'lSP.EV']
+                  'LotsSale', 'LotsCtgry', 'Forced', 'lEstValue', 'lFollowers',
+                  'Duration', 'Morning', 'Evening', 'Afternoon', 'lSP.EV']
     log_cols = ["multiplier", "EstValue", "StartPrice", "SP.EV", "Followers"]
     log10 = pd.DataFrame(np.log10(data[log_cols].values), columns=list(map("l{}".format, log_cols)))
     data = pd.concat([data, log10], axis=1).drop(log_cols, axis=1)
-    X = data.drop("lmultiplier", axis=1)  #[train_cols]
 
-    initial_state = X.sample(1)
-    ts = TabuSearchAlgorithm(initial_state, "output/AdaBoostClassifier.pkl", verbose=True)
+    sample = data.sample(1)
+
+    X, y = sample[train_cols], sample["lmultiplier"]
+
+    ts = TabuSearchAlgorithm(X, "output/AdaBoostClassifier.pkl", verbose=False)
     ts.solve()
+    print("Final results:", 10**y.values[0], ts.model.predict(ts.best[1])[0], ts.best[0])
