@@ -19,7 +19,7 @@ class TabuSearchAlgorithm:
     MOVE_NAMES = ["edit_dayperiod", "edit_duration", "edit_price"]
     PROBABILITIES = [.01, .49, .50]
 
-    def __init__(self, initial_state, model, n_iter=10**3, early_stop=10, tolerance=.01,
+    def __init__(self, initial_state, model, n_iter=10**4, early_stop=10, tolerance=0.,
                  tabu_size=20, verbose=True):
 
 
@@ -34,8 +34,8 @@ class TabuSearchAlgorithm:
         self.iteration = 0
         self.model = self.load_model(model)
         self.state = initial_state
-        self.score = self.evaluate(initial_state)
-        self.best_score = (0, None)
+        self.score, self.predicted_proba = self.evaluate(initial_state)
+        self.best_score = (self.score, self.state, self.predicted_proba)
         self.early_stop_history = deque(maxlen=early_stop)
         self.probabilities = {m: p for m, p in zip(self.MOVE_NAMES, self.PROBABILITIES)}
         self.move_functions = [self.edit_dayperiod, self.edit_duration, self.edit_price]
@@ -67,7 +67,9 @@ class TabuSearchAlgorithm:
 
     def print_report(self):
         if self.verbose:
-            print("Best solution achieved:", self.best_score[0])
+            print(f"Best solution achieved: {self.best_score[0]}\n"
+                  f"Best probabilities achieved: {self.best_score[-1]}\n"
+                  f"Best parameters found: \n{self.get_params(self.best_score[1])}")
             if self.max_iteration_reached():
                 reason_stopped = "the maximum number of iteration was reached."
             elif self.early_stop_reached():
@@ -81,30 +83,29 @@ class TabuSearchAlgorithm:
     #                           OPERATIONS ON OBJECT
     ############################################################################
 
-    def update(self, state):
+    def update(self, state, score, probabilities):
         """
         We update here the states if they are accepted by the method check (below)
         We also keep track of the best state that we encountered up to now and update
         the early_stop_history of the distances.
         :param state: the new state
         """
-        new_score = self.evaluate(state)
-        if new_score < self.best_score[0]:
-            self.best_score = (new_score, state)
-        self.early_stop_history.append(new_score)
+        if score > self.best_score[0]:
+            self.best_score = (score, state, probabilities)
+        self.early_stop_history.append(score)
         self.state = state
-        self.score = new_score
-        # print(self.state)
-        # input()
+        self.score = score
+        self.predicted_proba = probabilities
         
     def evaluate(self, row):
-        # print(row)
-        # print("\n")
-        probabilities = self.model.predict_proba(row.values)[0]
-        # print(row[self.COLUMN_NAMES[-6:]], probabilities)
-        # input()
+        probabilities = self.model.predict_proba(row.T.values.reshape(1, -1))[0]
         weighs = np.array([-1, 1, 5])
-        return np.dot(weighs, probabilities)
+        score = np.dot(weighs, probabilities)
+        return score, probabilities
+
+    def get_params(self, row):
+        print(row)
+        return row[self.COLUMN_NAMES[-6:]]
 
     ############################################################################
     #                                   MOVES
@@ -119,11 +120,11 @@ class TabuSearchAlgorithm:
         """
         # print(f"Trying {func.__name__} with {params}")
         # Calculate the new state
-        print(self.state[self.COLUMN_NAMES[-6:]], self.score)
+        # print(self.get_params(self.state), self.score)
         new_state = func(self.state, params)
-        new_score = self.evaluate(new_state)
-        print(new_state[self.COLUMN_NAMES[-6:]], new_score)
-        input()
+        new_score, probabilities = self.evaluate(new_state)
+        # print(new_score, probabilities)
+        # input()
         # We check whether the new state is accepted or not and perform the update if it is
         if self.check(new_score):
             if self.verbose:
@@ -131,7 +132,7 @@ class TabuSearchAlgorithm:
                     f"Score: {new_score:.2f}\tChange: {new_score / self.score - 1:+.3%} "
                     f"{func.__name__}, {params}"
                 )
-            self.update(new_state)
+            self.update(new_state, new_score, probabilities)
 
     def choose_move(self):
         """
@@ -195,6 +196,7 @@ class TabuSearchAlgorithm:
 
     @staticmethod
     def edit_price(row, value):
+        row = row.copy()
         # Set starting price to estimated price ration    
         row['lSP.EV'] = value
         # Because we change the sp.ev we also adapt the startprice
@@ -257,7 +259,8 @@ if __name__ == '__main__':
     log_cols = ["multiplier", "EstValue", "StartPrice", "SP.EV", "Followers"]
     log10 = pd.DataFrame(np.log10(data[log_cols].values), columns=list(map("l{}".format, log_cols)))
     data = pd.concat([data, log10], axis=1).drop(log_cols, axis=1)
-    X = data[train_cols]
+    X = data.drop("lmultiplier", axis=1)  #[train_cols]
+
     initial_state = X.sample(1)
-    ts = TabuSearchAlgorithm(initial_state, "output/GradientBoostingClassifier.pkl", verbose=True)
+    ts = TabuSearchAlgorithm(initial_state, "output/AdaBoostClassifier.pkl", verbose=True)
     ts.solve()
