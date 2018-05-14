@@ -1,28 +1,45 @@
 # Author: Quentin Meeus
 
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 from copy import deepcopy
-import random
+import pickle
 from collections import deque
 
 
 class TabuSearchAlgorithm:
 
-    MOVE_FUNCTIONS = ["local_city_swap", "two_edges_exchange", "global_city_swap"]
-    PROBABILITIES = [.01, .49, .5]
+    COLUMN_NAMES = [
+        'LotNr', 'Allocate', 'Bank', 'Dealer', 'Liquidator', 'Volunteer',
+        'LotsSale', 'LotsCtgry', 'Forced', 'year', 'lEstValue', 'lFollowers',
+        'Duration', 'Morning', 'Evening', 'Afternoon', 'lStartPrice', 'lSP.EV'
+    ]
 
-    def __init__(self, n_iter=10**5, early_stop=300, tolerance=.0007, tabu_size=15, verbose=True):
+    MOVE_NAMES = ["edit_dayperiod", "edit_duration", "edit_price"]
+    PROBABILITIES = [.01, .49, .50]
+
+    def __init__(self, initial_state, model, n_iter=10**3, early_stop=10, tolerance=.01,
+                 tabu_size=20, verbose=True):
+
+
+        # Algorithm configuration
         self.n_iter = n_iter
         self.early_stop = early_stop
         self.tolerance = tolerance
         self.tabu_size = tabu_size
         self.verbose = verbose
 
+        # Algorithm initialisation
         self.iteration = 0
-        self.current_best = (0, None)
-        self.history = deque(maxlen=early_stop)
-        self.probabilities = {move: proba for move, proba in zip(self.MOVE_FUNCTIONS, self.PROBABILITIES)}
-        self.move_functions = [self.local_city_swap, self.two_edges_exchange, self.global_city_swap]
-        self.tabu = {move: deque(maxlen=tabu_size) for move in self.MOVE_FUNCTIONS}
+        self.model = self.load_model(model)
+        self.state = initial_state
+        self.score = self.evaluate(initial_state)
+        self.best_score = (0, None)
+        self.early_stop_history = deque(maxlen=early_stop)
+        self.probabilities = {m: p for m, p in zip(self.MOVE_NAMES, self.PROBABILITIES)}
+        self.move_functions = [self.edit_dayperiod, self.edit_duration, self.edit_price]
+        self.tabu = {move: deque(maxlen=tabu_size) for move in self.MOVE_NAMES}
 
     def solve(self):
         """
@@ -46,12 +63,11 @@ class TabuSearchAlgorithm:
             self.move(func, params)
 
         # We make sure that all routes start at zero and end at zero
-        self.solution_ = {vehicle: rotate(route) for vehicle, route in self.current_best[1].items()}
         self.print_report()
 
     def print_report(self):
         if self.verbose:
-            print("Best solution achieved:", self.current_best[0])
+            print("Best solution achieved:", self.best_score[0])
             if self.max_iteration_reached():
                 reason_stopped = "the maximum number of iteration was reached."
             elif self.early_stop_reached():
@@ -69,20 +85,26 @@ class TabuSearchAlgorithm:
         """
         We update here the states if they are accepted by the method check (below)
         We also keep track of the best state that we encountered up to now and update
-        the history of the distances.
+        the early_stop_history of the distances.
         :param state: the new state
         """
-        new_distance = self.objective_function(state)
-        if new_distance < self.current_best[0]:
-            self.current_best = (new_distance, state)
-        self.history.append(new_distance)
+        new_score = self.evaluate(state)
+        if new_score < self.best_score[0]:
+            self.best_score = (new_score, state)
+        self.early_stop_history.append(new_score)
         self.state = state
+        self.score = new_score
+        # print(self.state)
+        # input()
         
-    def objective_function(self, row):
-        current = self.proba
-        proba = self.model.predict_proba(row)
-
-        return
+    def evaluate(self, row):
+        # print(row)
+        # print("\n")
+        probabilities = self.model.predict_proba(row.values)[0]
+        # print(row[self.COLUMN_NAMES[-6:]], probabilities)
+        # input()
+        weighs = np.array([-1, 1, 5])
+        return np.dot(weighs, probabilities)
 
     ############################################################################
     #                                   MOVES
@@ -95,15 +117,20 @@ class TabuSearchAlgorithm:
         :param func: the move function
         :param params: the parameters for the move function
         """
+        # print(f"Trying {func.__name__} with {params}")
         # Calculate the new state
-        new_state = func(*params)
-
+        print(self.state[self.COLUMN_NAMES[-6:]], self.score)
+        new_state = func(self.state, params)
+        new_score = self.evaluate(new_state)
+        print(new_state[self.COLUMN_NAMES[-6:]], new_score)
+        input()
         # We check whether the new state is accepted or not and perform the update if it is
-        if self.check(new_state):
+        if self.check(new_score):
             if self.verbose:
-                new_distance = self.objective_function(new_state)
-                print("Distance: {:.2f}\tChange: {:+.3%}"
-                      .format(new_distance, new_distance / self.objective_function(self.state) - 1))
+                print(
+                    f"Score: {new_score:.2f}\tChange: {new_score / self.score - 1:+.3%} "
+                    f"{func.__name__}, {params}"
+                )
             self.update(new_state)
 
     def choose_move(self):
@@ -117,9 +144,9 @@ class TabuSearchAlgorithm:
         choices = []
         for func_name, proba in self.probabilities.items():
             choices += [func_name] * int(proba * 100)
-        chosen_func_name = random.choice(choices)
-        func = move_functions[list(map(lambda f: f.__name__, move_functions)).index(chosen_func_name)]
-        return func, self.generate_params(func.__name__)
+        choice = np.random.choice(choices)
+        func = move_functions[list(map(lambda f: f.__name__, move_functions)).index(choice)]
+        return func, self.generate_params(choice)
 
     def generate_params(self, func_name):
         """
@@ -128,13 +155,13 @@ class TabuSearchAlgorithm:
         :return: the parameters generated
         """
         param_functions = {
-            "local_city_swap": self._params_local_city_swap,
-            "two_edges_exchange": self._params_two_edges_exchange,
-            "global_city_swap": self._params_global_city_swap
+            "edit_dayperiod": self._params_dayperiod,
+            "edit_duration": self._params_duration,
+            "edit_price": self._params_price
         }
         tries = 0
         while True:
-            if tries >= self.move_invalidation_threshold:
+            if tries >= 10:  #self.move_invalidation_threshold:
                 return
             params = param_functions[func_name]()
             if params in self.tabu[func_name]:
@@ -142,33 +169,46 @@ class TabuSearchAlgorithm:
                 continue
             self.tabu[func_name].append(params)
             return params
-        
-    def set_daytime(self, lot):
-        # Change auction daytime randomly only one time can be picked at the same time
+
+    @staticmethod
+    def edit_dayperiod(row, value):
+        row = row.copy()
         dayperiods = ["Morning", "Afternoon", "Evening"]
-        random_period, = np.random.choice(dayperiods, 1)
+        new_period = dayperiods[value]
         for period in dayperiods:
-            lot[period] = 1 if period == random_period else 0
-        return lot
+            row[period] = 1 if period == new_period else 0
+        return row
 
-    def set_duration(self, lot):
-        # Change auction duration
-        lot["Duration"] = np.random.randint(50,1001)
-        return lot
+    @staticmethod
+    def _params_dayperiod():
+        return np.random.randint(0, 3)
 
-    def set_start_price(self, lot):
+    @staticmethod
+    def edit_duration(row, value):
+        row = row.copy()
+        row["Duration"] = value
+        return row
+
+    @staticmethod
+    def _params_duration():
+        return np.random.randint(50, 1001)
+
+    @staticmethod
+    def edit_price(row, value):
         # Set starting price to estimated price ration    
-        spev = np.random.random() * 1.6 + 0.07
-        lot['lSP.EV'] = np.log10(spev)
+        row['lSP.EV'] = value
         # Because we change the sp.ev we also adapt the startprice
-        lot['lStartPrice'] = np.log10(spev * 10 ** lot['lEstValue'])
-        return lot
+        row['lStartPrice'] = row['lEstValue'] + value
+        return row
+
+    def _params_price(self):
+        return np.random.uniform(-1.5, 0.)
 
     ############################################################################
     #                                 CONDITIONS
     ############################################################################
 
-    def check(self, state):
+    def check(self, score):
         """
         Two conditions must be met for a state to be accepted:
         1)  The new distance is less than the current distance * some threshold depending on the tolerance
@@ -177,9 +217,8 @@ class TabuSearchAlgorithm:
         :param state: the new state
         :return: a boolean
         """
-        current_distance = self.objective_function(self.state)
-        return (self.objective_function(state) < current_distance * (1 + self.tolerance)
-                and self.check_distance_constraint(state))
+        current_score = self.score
+        return score > current_score * (1 + self.tolerance)
 
     def keep_running(self):
         """
@@ -197,4 +236,28 @@ class TabuSearchAlgorithm:
         return self.iteration >= self.n_iter
 
     def early_stop_reached(self):
-        return self.current_best[0] not in self.history and len(self.history) == self.early_stop
+        return self.best_score[0] not in self.early_stop_history and len(self.early_stop_history) == self.early_stop
+
+    @staticmethod
+    def load_model(model_file):
+        with open(model_file, 'rb') as f:
+            model = pickle.load(f)
+        return model
+
+
+if __name__ == '__main__':
+    data2014 = pd.read_csv('data/data2014.csv').assign(year=2014)
+    data2015 = pd.read_csv('data/data2015.csv').assign(year=2015)
+    data = pd.concat([data2014, data2015], axis=0).reset_index(drop=True)
+
+    target_name = "lmultiplier"
+    train_cols = ['LotNr', 'Allocate', 'Bank', 'Dealer', 'Liquidator', 'Volunteer',
+                  'LotsSale', 'LotsCtgry', 'Forced', 'year', 'lEstValue', 'lFollowers',
+                  'Duration', 'Morning', 'Evening', 'Afternoon', 'lStartPrice', 'lSP.EV']
+    log_cols = ["multiplier", "EstValue", "StartPrice", "SP.EV", "Followers"]
+    log10 = pd.DataFrame(np.log10(data[log_cols].values), columns=list(map("l{}".format, log_cols)))
+    data = pd.concat([data, log10], axis=1).drop(log_cols, axis=1)
+    X = data[train_cols]
+    initial_state = X.sample(1)
+    ts = TabuSearchAlgorithm(initial_state, "output/GradientBoostingClassifier.pkl", verbose=True)
+    ts.solve()
